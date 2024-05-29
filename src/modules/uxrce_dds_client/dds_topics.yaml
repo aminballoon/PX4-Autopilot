@@ -5,6 +5,12 @@
 #####
 publications:
 
+  - topic: /fmu/out/log_message
+    type: px4_msgs::msg::LogMessage
+
+  - topic: /fmu/out/irlock_report
+    type: px4_msgs::msg::IrlockReport
+
   - topic: /fmu/out/collision_constraints
     type: px4_msgs::msg::CollisionConstraints
 
@@ -87,3 +93,4 @@ subscriptions:
 
   - topic: /fmu/in/vehicle_trajectory_waypoint
     type: px4_msgs::msg::VehicleTrajectoryWaypoint
+
