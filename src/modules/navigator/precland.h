@@ -56,6 +56,7 @@ enum class PrecLandState {
 	FinalApproach, // Final landing approach, even without landing target
 	Search, // Search for landing target
 	Fallback, // Fallback landing method
+	Safetyland,
 	Done // Done landing
 };
 
@@ -64,6 +65,11 @@ enum class PrecLandMode {
 	Required = 2 // try to find landing target if not visible at the beginning
 };
 
+enum   SafetyLandMode {
+	DEFAULT	= 0, //Default
+	OFFSET	,
+	AREA
+};
 class PrecLand : public MissionBlock, public ModuleParams
 {
 public:
@@ -77,6 +83,8 @@ public:
 	void set_mode(PrecLandMode mode) { _mode = mode; };
 
 	PrecLandMode get_mode() { return _mode; };
+	SafetyLandMode safetyland {SafetyLandMode::DEFAULT};
+
 
 	bool is_activated() { return _is_activated; };
 
@@ -90,7 +98,10 @@ private:
 	void run_state_descend_above_target();
 	void run_state_final_approach();
 	void run_state_search();
+	void run_state_safetyland();
 	void run_state_fallback();
+
+	void print_state_switch_message(const char *state_name);
 
 	// attempt to switch to a different state. Returns true if state change was successful, false otherwise
 	bool switch_to_state_start();
@@ -98,10 +109,9 @@ private:
 	bool switch_to_state_descend_above_target();
 	bool switch_to_state_final_approach();
 	bool switch_to_state_search();
+	bool switch_to_state_safety();
 	bool switch_to_state_fallback();
 	bool switch_to_state_done();
-
-	void print_state_switch_message(const char *state_name);
 
 	// check if a given state could be changed into. Return true if possible to transition to state, false otherwise
 	bool check_state_conditions(PrecLandState state);
@@ -131,14 +141,24 @@ private:
 	PrecLandMode _mode{PrecLandMode::Opportunistic};
 
 	bool _is_activated {false}; /**< indicates if precland is activated */
-
+	bool mode_area_ok = false;
 	DEFINE_PARAMETERS(
 		(ParamFloat<px4::params::PLD_BTOUT>) _param_pld_btout,
 		(ParamFloat<px4::params::PLD_HACC_RAD>) _param_pld_hacc_rad,
 		(ParamFloat<px4::params::PLD_FAPPR_ALT>) _param_pld_fappr_alt,
 		(ParamFloat<px4::params::PLD_SRCH_ALT>) _param_pld_srch_alt,
 		(ParamFloat<px4::params::PLD_SRCH_TOUT>) _param_pld_srch_tout,
-		(ParamInt<px4::params::PLD_MAX_SRCH>) _param_pld_max_srch
+		(ParamInt<px4::params::PLD_MAX_SRCH>) _param_pld_max_srch,
+
+		(ParamInt<px4::params::PLD_LAT>) _param_pld_lat,
+		(ParamInt<px4::params::PLD_LON>) _param_pld_lon,
+		(ParamFloat<px4::params::PLD_RANGE>) _param_pld_range,
+
+		(ParamFloat<px4::params::PLD_OFFSET_X>) _param_pld_offset_x,
+		(ParamFloat<px4::params::PLD_OFFSET_Y>) _param_pld_offset_y,
+
+		(ParamInt<px4::params::PLD_MODE>) _param_pld_mode
+
 	)
 
 	// non-navigator parameters

@@ -5,6 +5,22 @@
 #####
 publications:
 
+
+  - topic: /fmu/out/landing_target_pose
+    type: px4_msgs::msg::LandingTargetPose
+
+  - topic: /fmu/out/satellite_info
+    type: px4_msgs::msg::SatelliteInfo
+
+  - topic: /fmu/out/wind
+    type: px4_msgs::msg::Wind
+
+  - topic: /fmu/out/log_message
+    type: px4_msgs::msg::LogMessage
+
+  - topic: /fmu/out/irlock_report
+    type: px4_msgs::msg::IrlockReport
+
   - topic: /fmu/out/collision_constraints
     type: px4_msgs::msg::CollisionConstraints
 
@@ -87,3 +103,4 @@ subscriptions:
 
   - topic: /fmu/in/vehicle_trajectory_waypoint
     type: px4_msgs::msg::VehicleTrajectoryWaypoint
+

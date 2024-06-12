@@ -76,6 +76,11 @@ CONFIG:
       buildType: MinSizeRel
       settings:
         CONFIG: px4_fmu-v6x_default
+    px4_fmu-v6x_sih:
+      short: px4_fmu-v6x_sih
+      buildType: MinSizeRel
+      settings:
+        CONFIG: px4_fmu-v6x_sih
     px4_fmu-v6x_bootloader:
       short: px4_fmu-v6x_bootloader
       buildType: MinSizeRel

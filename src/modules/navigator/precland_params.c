@@ -119,3 +119,78 @@ PARAM_DEFINE_FLOAT(PLD_SRCH_TOUT, 10.0f);
  * @group Precision Land
  */
 PARAM_DEFINE_INT32(PLD_MAX_SRCH, 3);
+
+/**
+ * safety landing latitude
+ *
+ * Latitude of safety landing area.
+ *
+ * @unit deg*1e7
+ * @min -1800000000
+ * @max 1800000000
+ * @group Precision Land
+ */
+PARAM_DEFINE_INT32(PLD_LAT, 0);
+
+/**
+ * safety landing longitude
+ *
+ * Longitude of safety landing area.
+ *
+ * @unit deg*1e7
+ * @min -1800000000
+ * @max 1800000000
+ * @group Precision Land
+ */
+PARAM_DEFINE_INT32(PLD_LON, 0);
+
+/**
+ * fence area
+ *
+ * Number of fence area.
+ *
+ * @unit m
+ * @min 0.0
+ * @max 100
+ * @group Precision Land
+ */
+PARAM_DEFINE_FLOAT(PLD_RANGE, 100.0f);
+
+/**
+ * X offset landing
+ *
+ * X offset landing.
+ *
+ * @unit m
+ * @min 0.0
+ * @max 100
+ * @group Precision Land
+ */
+PARAM_DEFINE_FLOAT(PLD_OFFSET_X, 0f);
+
+/**
+ * X offset landing
+ *
+ * X offset landing.
+ *
+ * @unit m
+ * @min 0.0
+ * @max 100
+ * @group Precision Land
+ */
+PARAM_DEFINE_FLOAT(PLD_OFFSET_Y, 0f);
+
+/**
+ * mode safety landing
+ *
+ * mode safety landing area.
+ *
+ * @value 0 disable.
+ * @value 1 offset mode
+ * @value 2 safety area
+ * @group Precision Land
+ */
+PARAM_DEFINE_INT32(PLD_MODE, 0);
+
+
+
