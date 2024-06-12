@@ -55,11 +55,13 @@
 #include <uORB/topics/vehicle_status.h>
 #include <uORB/topics/vehicle_command.h>
 
+
 #define SEC2USEC 1000000.0f
 
 #define STATE_TIMEOUT 10000000 // [us] Maximum time to spend in any state
 
 static constexpr const char *LOST_TARGET_ERROR_MESSAGE = "Lost landing target while landing";
+extern orb_advert_t mavlink_log_pub;
 
 PrecLand::PrecLand(Navigator *navigator) :
 	MissionBlock(navigator),
@@ -91,7 +93,7 @@ PrecLand::on_activation()
 
 	// Check that the current position setpoint is valid, otherwise land at current position
 	if (!pos_sp_triplet->current.valid) {
-		PX4_WARN("Reset");
+		PX4_WARN("Resetting landing position to current position");
 		pos_sp_triplet->current.lat = _navigator->get_global_position()->lat;
 		pos_sp_triplet->current.lon = _navigator->get_global_position()->lon;
 		pos_sp_triplet->current.alt = _navigator->get_global_position()->alt;
@@ -148,6 +150,10 @@ PrecLand::on_active()
 		run_state_search();
 		break;
 
+	case PrecLandState::Safetyland:
+		run_state_safetyland();
+		break;
+
 	case PrecLandState::Fallback:
 		run_state_fallback();
 		break;
@@ -186,6 +192,7 @@ PrecLand::updateParams()
 void
 PrecLand::run_state_start()
 {
+	// PX4_INFO("run_state_start");
 	// check if target visible and go to horizontal approach
 	if (switch_to_state_horizontal_approach()) {
 		return;
@@ -193,12 +200,17 @@ PrecLand::run_state_start()
 
 	if (_mode == PrecLandMode::Opportunistic) {
 		// could not see the target immediately, so just fall back to normal landing
-		switch_to_state_fallback();
+		if (!switch_to_state_fallback())
+		{
+			PX4_ERR("Can't switch to search or fallback landing");
+		}
 	}
 
 	position_setpoint_triplet_s *pos_sp_triplet = _navigator->get_position_setpoint_triplet();
-	float dist = get_distance_to_next_waypoint(pos_sp_triplet->current.lat, pos_sp_triplet->current.lon,
-			_navigator->get_global_position()->lat, _navigator->get_global_position()->lon);
+	float dist = get_distance_to_next_waypoint(	pos_sp_triplet->current.lat,
+							pos_sp_triplet->current.lon,
+							_navigator->get_global_position()->lat,
+							_navigator->get_global_position()->lon);
 
 	// check if we've reached the start point
 	if (dist < _navigator->get_acceptance_radius()) {
@@ -211,24 +223,29 @@ PrecLand::run_state_start()
 
 			if (hrt_absolute_time() - _point_reached_time > 2000000) {
 				if (!switch_to_state_search()) {
-					switch_to_state_fallback();
+					if (!switch_to_state_fallback()) {
+						PX4_ERR("Can't switch to search or fallback landing");
+					}
 				}
 			}
 
 		} else {
-			switch_to_state_fallback();
+			if (!switch_to_state_fallback()) {
+				PX4_ERR("Can't switch to search or fallback landing");
+			}
 		}
 	}
 }
-
+// approach horizontal #
 void
 PrecLand::run_state_horizontal_approach()
 {
+	// PX4_INFO("run_state_horizontal_approach");
 	position_setpoint_triplet_s *pos_sp_triplet = _navigator->get_position_setpoint_triplet();
 
 	// check if target visible, if not go to start
 	if (!check_state_conditions(PrecLandState::HorizontalApproach)) {
-		PX4_WARN("%s, state: %i", LOST_TARGET_ERROR_MESSAGE, (int) _state);
+		PX4_WARN("Lost landing target while landing (horizontal approach).");
 
 		// Stay at current position for searching for the landing target
 		pos_sp_triplet->current.lat = _navigator->get_global_position()->lat;
@@ -236,7 +253,9 @@ PrecLand::run_state_horizontal_approach()
 		pos_sp_triplet->current.alt = _navigator->get_global_position()->alt;
 
 		if (!switch_to_state_start()) {
-			switch_to_state_fallback();
+			if (!switch_to_state_fallback()) {
+				PX4_ERR("Can't switch to fallback landing");
+			}
 		}
 
 		return;
@@ -257,23 +276,37 @@ PrecLand::run_state_horizontal_approach()
 
 	}
 
+	if (hrt_absolute_time() - _state_start_time > STATE_TIMEOUT) {
+		PX4_ERR("Precision landing took too long during horizontal approach phase.");
+
+		if (switch_to_state_fallback()) {
+			return;
+		}
+
+		PX4_ERR("Can't switch to fallback landing");
+	}
+
 	float x = _target_pose.x_abs;
 	float y = _target_pose.y_abs;
 
 	slewrate(x, y);
 
 	// XXX need to transform to GPS coords because mc_pos_control only looks at that
+	// pos_sp_triplet->current.lat = lat;
+	// pos_sp_triplet->current.lon = lon;
 	_map_ref.reproject(x, y, pos_sp_triplet->current.lat, pos_sp_triplet->current.lon);
+
 
 	pos_sp_triplet->current.alt = _approach_alt;
 	pos_sp_triplet->current.type = position_setpoint_s::SETPOINT_TYPE_POSITION;
 
 	_navigator->set_position_setpoint_triplet_updated();
 }
-
+// above target #
 void
 PrecLand::run_state_descend_above_target()
 {
+	// PX4_INFO("run_state_descend_above_target");
 	position_setpoint_triplet_s *pos_sp_triplet = _navigator->get_position_setpoint_triplet();
 
 	// check if target visible
@@ -301,16 +334,18 @@ PrecLand::run_state_descend_above_target()
 
 	_navigator->set_position_setpoint_triplet_updated();
 }
-
+// final approach #
 void
 PrecLand::run_state_final_approach()
 {
+	// PX4_INFO("run_state_final_approach");
 	// nothing to do, will land
 }
 
 void
 PrecLand::run_state_search()
 {
+	// PX4_INFO("run_state_search");
 	// check if we can see the target
 	if (check_state_conditions(PrecLandState::HorizontalApproach)) {
 		if (!_target_acquired_time) {
@@ -333,22 +368,87 @@ PrecLand::run_state_search()
 	}
 
 	// check if search timed out and go to fallback
+
+
 	if (hrt_absolute_time() - _state_start_time > _param_pld_srch_tout.get()*SEC2USEC) {
 		PX4_WARN("Search timed out");
+		if (_param_pld_mode.get() == SafetyLandMode::AREA){
+			// double range_safety_area = sqrt( pow(_navigator->get_global_position()->lat - double(_param_pld_lat.get()),2)
+			// 			   +     pow(_navigator->get_global_position()->lon - double(_param_pld_lon.get()),2) )
+			// 			   / 111111.0;
 
-		switch_to_state_fallback();
+			float range_safety_area = get_distance_to_next_waypoint(_navigator->get_global_position()->lat,	_navigator->get_global_position()->lon,
+										double(_param_pld_lat.get()/1e7 ),	double(_param_pld_lon.get()/1e7 )
+										);
+			PX4_INFO("Distance to safety area : %f",double(range_safety_area));
+			if (float(fabs(range_safety_area)) < 	float(_param_pld_range.get())){
+				if (!switch_to_state_safety()) {
+					PX4_ERR("Can't switch to safety landing");
+				}
+			}
+			else{
+				PX4_ERR("Can't switch to safety landing because out off range");
+				if (!switch_to_state_fallback()) {
+				PX4_ERR("Can't switch to fallback landing");
+			}
+
+			}
+
+		}
+		else {
+			if (!switch_to_state_fallback()) {
+				PX4_ERR("Can't switch to fallback landing");
+			}
+		}
 	}
-}
 
+}
+void
+PrecLand::run_state_safetyland()
+{
+	// PX4_INFO("run_state_safeland");
+	if (check_state_conditions(PrecLandState::Safetyland)) 	{
+		if (!switch_to_state_fallback()) {
+			PX4_ERR("Can't switch to fallback landing");
+		}
+		return;
+
+
+	}
+
+	position_setpoint_triplet_s *pos_sp_triplet = _navigator->get_position_setpoint_triplet();
+	double lat, lon;
+
+	lat = _param_pld_lat.get()/1e7;
+	lon = _param_pld_lon.get()/1e7;
+
+	PX4_INFO("lat %f",lat);
+	PX4_INFO("lon %f",lon);
+	PX4_INFO("run_state_safety");
+	pos_sp_triplet->current.lat = lat;
+	pos_sp_triplet->current.lon = lon;
+	// pos_sp_triplet->current.alt = _approach_alt;
+	pos_sp_triplet->current.type = position_setpoint_s::SETPOINT_TYPE_POSITION;
+
+	_navigator->set_position_setpoint_triplet_updated();
+
+
+
+
+
+}
+// Fallback
 void
 PrecLand::run_state_fallback()
 {
+	// PX4_INFO("run_state_fallback");
 	// nothing to do, will land
 }
 
 bool
 PrecLand::switch_to_state_start()
 {
+	PX4_INFO("switch_to_state_start");
 	if (check_state_conditions(PrecLandState::Start)) {
 		position_setpoint_triplet_s *pos_sp_triplet = _navigator->get_position_setpoint_triplet();
 		pos_sp_triplet->current.type = position_setpoint_s::SETPOINT_TYPE_POSITION;
@@ -368,8 +468,8 @@ PrecLand::switch_to_state_start()
 bool
 PrecLand::switch_to_state_horizontal_approach()
 {
+	PX4_INFO("switch_to_state_horizontal_approach");
 	if (check_state_conditions(PrecLandState::HorizontalApproach)) {
-		print_state_switch_message("horizontal approach");
 		_approach_alt = _navigator->get_global_position()->alt;
 
 		_point_reached_time = 0;
@@ -385,8 +485,8 @@ PrecLand::switch_to_state_horizontal_approach()
 bool
 PrecLand::switch_to_state_descend_above_target()
 {
+	PX4_INFO("switch_to_state_descend_above_target");
 	if (check_state_conditions(PrecLandState::DescendAboveTarget)) {
-		print_state_switch_message("descend");
 		_state = PrecLandState::DescendAboveTarget;
 		_state_start_time = hrt_absolute_time();
 		return true;
@@ -398,8 +498,8 @@ PrecLand::switch_to_state_descend_above_target()
 bool
 PrecLand::switch_to_state_final_approach()
 {
+	PX4_INFO("switch_to_state_final_approach");
 	if (check_state_conditions(PrecLandState::FinalApproach)) {
-		print_state_switch_message("final approach");
 		_state = PrecLandState::FinalApproach;
 		_state_start_time = hrt_absolute_time();
 		return true;
@@ -427,13 +527,75 @@ PrecLand::switch_to_state_search()
 }
 
 bool
+PrecLand::switch_to_state_safety()
+{
+	PX4_INFO("go to safe zone.");
+
+	mavlink_log_info(&mavlink_log_pub, "go to safe zone.");
+	vehicle_local_position_s *vehicle_local_position = _navigator->get_local_position();
+
+	position_setpoint_triplet_s *pos_sp_triplet = _navigator->get_position_setpoint_triplet();
+	pos_sp_triplet->current.alt = vehicle_local_position->ref_alt + _param_pld_srch_alt.get();
+	pos_sp_triplet->current.type = position_setpoint_s::SETPOINT_TYPE_POSITION;
+	_navigator->set_position_setpoint_triplet_updated();
+
+	_target_acquired_time = 0;
+
+	_state = PrecLandState::Safetyland;
+	_state_start_time = hrt_absolute_time();
+	return true;
+}
+
+bool
 PrecLand::switch_to_state_fallback()
 {
-	print_state_switch_message("fallback");
+	// PX4_WARN("Falling back to normal land(offset).");
 	position_setpoint_triplet_s *pos_sp_triplet = _navigator->get_position_setpoint_triplet();
-	pos_sp_triplet->current.lat = _navigator->get_global_position()->lat;
-	pos_sp_triplet->current.lon = _navigator->get_global_position()->lon;
-	pos_sp_triplet->current.alt = _navigator->get_global_position()->alt;
+	// double lat, lon;
+	// map_projection_reproject(&_map_ref, 10.0, 10.0, &lat, &lon);
+
+	// pos_sp_triplet->current.lat = _navigator->get_global_position()->lat + 10.0/111111.0 ;
+	// pos_sp_triplet->current.lon = _navigator->get_global_position()->lon + 10.0/111111.0;
+
+
+	// rep->current.yaw = get_local_position()->heading;
+
+
+	if  (_param_pld_mode.get() == SafetyLandMode::OFFSET){
+		PX4_WARN("Falling back to normal land(offset).");
+		pos_sp_triplet->current.lat = _navigator->get_global_position()->lat + double(_param_pld_offset_x.get())/111111.0;
+		pos_sp_triplet->current.lon = _navigator->get_global_position()->lon + double(_param_pld_offset_y.get())/111111.0;
+
+		double yaw = _navigator->get_local_position()->heading;
+		double offset_x = double(_param_pld_offset_x.get())/111111.0 ;
+		double offset_y = double(_param_pld_offset_y.get())/111111.0 ;
+		double offset_lat = cos(yaw)*offset_x - sin(yaw)*offset_y ;
+		double offset_lon = sin(yaw)*offset_x - cos(yaw)*offset_y ;
+
+		// PX4_INFO("%lf",yaw);
+		// PX4_INFO("%lf,%lf",offset_x,offset_y);
+		// PX4_INFO("%lf,%lf",offset_lat,offset_lon);
+
+		pos_sp_triplet->current.lat = _navigator->get_global_position()->lat + offset_lat;
+		pos_sp_triplet->current.lon = _navigator->get_global_position()->lon + offset_lon;
+
+
+		pos_sp_triplet->current.alt = _navigator->get_global_position()->alt ;
+	}
+	else if  (_param_pld_mode.get() == SafetyLandMode::AREA){
+		PX4_WARN("Falling back to normal land area.");
+		pos_sp_triplet->current.lat = _navigator->get_global_position()->lat ;
+		pos_sp_triplet->current.lon = _navigator->get_global_position()->lon ;
+		pos_sp_triplet->current.alt = _navigator->get_global_position()->alt ;
+	}
+	else {
+		PX4_WARN("Falling back to normal land.");
+		pos_sp_triplet->current.lat = _navigator->get_global_position()->lat ;
+		pos_sp_triplet->current.lon = _navigator->get_global_position()->lon ;
+		pos_sp_triplet->current.alt = _navigator->get_global_position()->alt ;
+	}
+
+
 	pos_sp_triplet->current.type = position_setpoint_s::SETPOINT_TYPE_LAND;
 	_navigator->set_position_setpoint_triplet_updated();
 
@@ -445,6 +607,7 @@ PrecLand::switch_to_state_fallback()
 bool
 PrecLand::switch_to_state_done()
 {
+	PX4_INFO("switch_to_state_done");
 	_state = PrecLandState::Done;
 	_state_start_time = hrt_absolute_time();
 	return true;
@@ -461,10 +624,19 @@ bool PrecLand::check_state_conditions(PrecLandState state)
 
 	switch (state) {
 	case PrecLandState::Start:
+		PX4_INFO("PrecLandState::Start");
 		return _search_cnt <= _param_pld_max_srch.get();
 
 	case PrecLandState::HorizontalApproach:
-
+		PX4_INFO("PrecLandState::HorizontalApproach");
+		if(_navigator->get_global_position()->alt - vehicle_local_position->ref_alt - _param_pld_srch_alt.get() > float(0.1)) 	{
+			_state_start_time = hrt_absolute_time() ;
+			PX4_INFO("reset time");
+			// mavlink_log_info
+		}
+		else{
+			PX4_INFO("time count down");
+		}
 		// if we're already in this state, only want to make it invalid if we reached the target but can't see it anymore
 		if (_state == PrecLandState::HorizontalApproach) {
 			if (fabsf(_target_pose.x_abs - vehicle_local_position->x) < _param_pld_hacc_rad.get()
@@ -484,6 +656,7 @@ bool PrecLand::check_state_conditions(PrecLandState state)
 
 	case PrecLandState::DescendAboveTarget:
 
+		PX4_INFO("PrecLandState::DescendAboveTarget");
 		// if we're already in this state, only leave it if target becomes unusable, don't care about horizontall offset to target
 		if (_state == PrecLandState::DescendAboveTarget) {
 			// if we're close to the ground, we're more critical of target timeouts so we quickly go into descend
@@ -502,16 +675,27 @@ bool PrecLand::check_state_conditions(PrecLandState state)
 		}
 
 	case PrecLandState::FinalApproach:
+		PX4_INFO("PrecLandState::FinalApproach");
 		return _target_pose_valid && _target_pose.abs_pos_valid
 		       && (_target_pose.z_abs - vehicle_local_position->z) < _param_pld_fappr_alt.get();
 
 	case PrecLandState::Search:
+		PX4_INFO("PrecLandState::Search");
 		return true;
 
+	case PrecLandState::Safetyland:
+		PX4_INFO("PrecLandState::Safetyland");
+
+		return		fabsf(_param_pld_lat.get()/1e7  - _navigator->get_global_position()->lat) < fabsf(0.5/111111.0)
+			&& 	fabsf(_param_pld_lon.get()/1e7  - _navigator->get_global_position()->lon) < fabsf(0.5/111111.0);
+		       	// && (_target_pose.z_abs 		- vehicle_local_position->z) < _param_pld_fappr_alt.get();
+
 	case PrecLandState::Fallback:
+		PX4_INFO("PrecLandState::Fallback");
 		return true;
 
 	default:
+		PX4_INFO("PrecLandState::default");
 		return false;
 	}
 }
